@@ -2,6 +2,51 @@
 
 A code-driven explanation of encase's WGSL memory layout validation mechanisms.
 
+## Table of Contents
+
+1. [Core Invariants](#1-core-invariants)
+   - [Alignment Rules](#11-alignment-rules)
+   - [Size Rounding](#12-size-rounding)
+   - [Array Stride Requirements](#13-array-stride-requirements)
+   - [Struct Layout Constraints](#14-struct-layout-constraints)
+   - [Uniform vs Storage Buffer Rules](#15-uniform-vs-storage-buffer-rules)
+
+2. [ShaderType Metadata](#2-shadertype-metadata)
+   - [Metadata Structure](#21-metadata-structure)
+   - [Metadata Computation for Primitive Types](#22-metadata-computation-for-primitive-types)
+   - [Metadata Computation for Arrays](#24-metadata-computation-for-arrays)
+   - [Metadata Computation for Structs](#25-metadata-computation-for-structs)
+   - [Field Order and Padding](#26-field-order-and-padding)
+   - [repr(C) and repr(align(N))](#27-reprc-and-repralignn)
+   - [Implicit vs Explicit Padding](#28-implicit-vs-explicit-padding)
+
+3. [Array Stride Validation (The Panic Source)](#3-array-stride-validation-the-panic-source)
+   - [Where Array Stride is Computed](#31-where-array-stride-is-computed)
+   - [The Panic Logic](#32-the-panic-logic)
+   - [Why Validate During Single Value Serialization?](#33-why-validate-during-single-value-serialization)
+   - [Example: Struct with Size 32 and Alignment 4](#34-example-struct-with-size-32-and-alignment-4)
+   - [All ShaderTypes as Potential Array Elements](#35-all-shadertypes-as-potential-array-elements)
+   - [Uniform vs Storage Context](#36-uniform-vs-storage-context)
+
+4. [Buffer-Context-Dependent Validation](#4-buffer-context-dependent-validation)
+   - [Checks Requiring Buffer Wrappers](#41-checks-requiring-buffer-wrappers)
+   - [What Buffer Wrappers Supply](#42-what-buffer-wrappers-supply)
+   - [Information from ShaderType Alone](#43-information-from-shadertype-alone)
+   - [Why Serializing Outside Context Changes Behavior](#44-why-serializing-outside-context-changes-behavior)
+
+5. [What encase Explicitly Supports vs Implicitly Discourages](#5-what-encase-explicitly-supports-vs-implicitly-discourages)
+   - [Explicitly Supported Patterns](#51-explicitly-supported-patterns)
+   - [Technically Possible but Fragile Patterns](#52-technically-possible-but-fragile-patterns)
+   - [Why Wrapping Breaks Assumptions](#53-why-wrapping-breaks-assumptions)
+
+6. [Extractable Subset for Custom GpuUniform<T>](#6-extractable-subset-for-custom-gpuuniformt)
+   - [Minimal WGSL Rules for Single Uniform Struct](#61-minimal-wgsl-rules-for-single-uniform-struct)
+   - [WGSL Rules That Can Be Dropped](#62-wgsl-rules-that-can-be-dropped)
+   - [Absolutely Required Checks](#63-absolutely-required-checks)
+   - [Implementation Checklist](#64-implementation-checklist)
+
+[Summary](#summary)
+
 ---
 
 ## 1. Core Invariants
