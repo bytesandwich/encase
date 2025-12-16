@@ -29,6 +29,7 @@ impl AlignmentValue {
 Alignments are computed per-type:
 - Scalars (f32, u32, i32): 4 bytes (`src/types/scalar.rs:18`)
 - Vectors: Next power of 2 of size (`src/types/vector.rs:120`)
+- Matrices: Next power of 2 of column size (`src/types/matrix.rs:137`)
 - Arrays: Element alignment (`src/types/array.rs:26`)
 - Structs: Maximum field alignment (`derive/impl/src/lib.rs:666`)
 
@@ -146,7 +147,10 @@ const METADATA: Metadata<Self::ExtraMetadata> = {
 - Arrays set `has_uniform_min_alignment: true` (`src/types/array.rs:39`)
 - Structs set `has_uniform_min_alignment: true` (`derive/impl/src/lib.rs:684`)
 - Vectors set `has_uniform_min_alignment: false` (`src/types/vector.rs:124`)
+- Matrices set `has_uniform_min_alignment: false` (`src/types/matrix.rs:143`)
 - Runtime-sized arrays set `has_uniform_min_alignment: true` (`src/types/runtime_sized_array.rs:138`)
+
+**Note on matrices:** Matrices are laid out as arrays of column vectors but don't require 16-byte stride validation. This is because WGSL treats matrix columns as vectors, not as array elements subject to uniform array stride rules.
 
 ---
 
@@ -205,7 +209,35 @@ const METADATA: Metadata<()> = {
 - vec3: size=12, alignment=16
 - vec4: size=16, alignment=16
 
-### 2.3 Metadata Computation for Arrays
+**Matrices** (`src/types/matrix.rs:135-150`):
+```rust
+pub struct MatrixMetadata {
+    pub col_padding: u64,
+}
+
+const METADATA: Metadata<MatrixMetadata> = {
+    // Column is a vector of R elements
+    let col_size = SizeValue::from(T::SHADER_SIZE).mul(R);
+    let alignment = AlignmentValue::from_next_power_of_two_size(col_size);
+    
+    // Total size = C columns, each rounded to alignment
+    let size = alignment.round_up_size(col_size).mul(C);
+    let col_padding = alignment.padding_needed_for(col_size.get());
+    
+    Metadata {
+        alignment,
+        has_uniform_min_alignment: false,
+        min_size: size,
+        is_pod: <[T; R] as ShaderType>::METADATA.is_pod() && col_padding == 0,
+        extra: MatrixMetadata { col_padding },
+    }
+};
+```
+- mat2x2: size=16, alignment=8 (2 columns of vec2)
+- mat3x3: size=48, alignment=16 (3 columns of vec3)
+- mat4x4: size=64, alignment=16 (4 columns of vec4)
+
+### 2.4 Metadata Computation for Arrays
 
 `src/types/array.rs:25-44`
 ```rust
@@ -245,7 +277,7 @@ impl<T: ShaderType + ShaderSize, const N: usize> ShaderType for [T; N] {
 - Total size: 40
 - **This fails uniform buffer validation** because stride (4) < 16
 
-### 2.4 Metadata Computation for Structs
+### 2.5 Metadata Computation for Structs
 
 `derive/impl/src/lib.rs:481-528`
 
@@ -316,7 +348,7 @@ const METADATA: Metadata<StructMetadata<N>> = {
 };
 ```
 
-### 2.5 Field Order and Padding
+### 2.6 Field Order and Padding
 
 **Field order matters** because offsets are computed sequentially:
 
@@ -338,7 +370,7 @@ struct Example2 {
 
 Both have the same size but different internal layouts.
 
-### 2.6 repr(C) and repr(align(N))
+### 2.7 repr(C) and repr(align(N))
 
 **encase ignores Rust repr attributes** because:
 
@@ -365,7 +397,7 @@ fn alignment(&self, root: &Path) -> TokenStream {
 
 The `#[shader(align(N))]` attribute overrides the type's natural alignment.
 
-### 2.7 Implicit vs Explicit Padding
+### 2.8 Implicit vs Explicit Padding
 
 **Implicit padding:** Computed automatically by encase
 - Between struct fields (`derive/impl/src/lib.rs:502`)
